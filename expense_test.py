@@ -4,7 +4,7 @@ import urllib.error
 import urllib.request
 
 
-def request_json(url: str, method: str = "GET", payload: dict | None = None):
+def request_json(url: str, method: str = "GET", payload: object | None = None):
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     headers = {"Content-Type": "application/json"} if payload is not None else {}
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
@@ -19,7 +19,7 @@ class TestExpenseTracker(unittest.TestCase):
         status, body = request_json(
             f"{self.BASE_URL}/expenses",
             method="POST",
-            payload={"title": "Coffee", "amount": 450, "category": "Food"},
+            payload={"title": "  Coffee  ", "amount": 450, "category": "  Food  "},
         )
         self.assertEqual(status, 201)
         self.assertEqual(body["title"], "Coffee")
@@ -44,11 +44,33 @@ class TestExpenseTracker(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 400)
 
     def test_negative_or_zero_amount_returns_400(self):
+        for amount in (-100, 0):
+            with self.subTest(amount=amount):
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    request_json(
+                        f"{self.BASE_URL}/expenses",
+                        method="POST",
+                        payload={"title": "Invalid Item", "amount": amount},
+                    )
+                self.assertEqual(ctx.exception.code, 400)
+
+    def test_invalid_json_returns_400(self):
+        req = urllib.request.Request(
+            f"{self.BASE_URL}/expenses",
+            data=b'{"title":',
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req, timeout=3)
+        self.assertEqual(ctx.exception.code, 400)
+
+    def test_non_object_json_returns_400(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             request_json(
                 f"{self.BASE_URL}/expenses",
                 method="POST",
-                payload={"title": "Invalid Item", "amount": -100},
+                payload=["not", "an", "object"],
             )
         self.assertEqual(ctx.exception.code, 400)
 
