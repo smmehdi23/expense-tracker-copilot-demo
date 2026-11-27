@@ -1,14 +1,35 @@
 import json
+import math
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 EXPENSES = []
 
 
+class ValidationError(ValueError):
+    pass
+
+
 def add_expense(title: str, amount: float, category: str = "general") -> dict:
-    # Intentional edge-case bug for Copilot code review demo:
-    # - Doesn't strip whitespace or reject empty titles
-    # - Allows negative or zero amounts
-    # - Doesn't normalize category casing
+    if not isinstance(title, str):
+        raise ValidationError("title must be a string")
+    title = title.strip()
+    if not title:
+        raise ValidationError("title must not be empty")
+
+    if (
+        isinstance(amount, bool)
+        or not isinstance(amount, (int, float))
+        or (isinstance(amount, float) and not math.isfinite(amount))
+        or amount <= 0
+    ):
+        raise ValidationError("amount must be a positive number")
+
+    if not isinstance(category, str):
+        raise ValidationError("category must be a string")
+    category = category.strip().lower()
+    if not category:
+        raise ValidationError("category must not be empty")
+
     item = {
         "id": len(EXPENSES) + 1,
         "title": title,
@@ -42,15 +63,35 @@ class ExpenseHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "Not found"})
             return
 
-        content_length = int(self.headers.get("Content-Length", 0))
-        raw_body = self.rfile.read(content_length)
-        data = json.loads(raw_body.decode("utf-8"))
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._send_json(400, {"error": "Invalid Content-Length"})
+            return
+        if content_length < 0:
+            self._send_json(400, {"error": "Invalid Content-Length"})
+            return
 
-        title = data.get("title")
-        amount = data.get("amount")
-        category = data.get("category", "general")
+        try:
+            raw_body = self.rfile.read(content_length)
+            data = json.loads(raw_body.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            self._send_json(400, {"error": "Invalid JSON request"})
+            return
 
-        created = add_expense(title, amount, category)
+        if not isinstance(data, dict):
+            self._send_json(400, {"error": "JSON body must be an object"})
+            return
+
+        try:
+            created = add_expense(
+                data.get("title"),
+                data.get("amount"),
+                data.get("category", "general"),
+            )
+        except ValidationError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
         self._send_json(201, created)
 
     def log_message(self, format, *args):
